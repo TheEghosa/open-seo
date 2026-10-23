@@ -76,6 +76,9 @@ export const projects = pgTable(
     // The Prompt Research keywords from AI visibility setup, one
     // per line, most important first. Null until setup runs.
     aiResearchKeywords: text("ai_research_keywords"),
+    // The IndexNow key the site hosts at /{key}.txt. Public by design, so it
+    // is stored as plain text. Null until IndexNow is first used.
+    indexnowKey: text("indexnow_key"),
   },
   (table) => [
     // Only the auto-created Default/null-domain project is a singleton. This
@@ -211,7 +214,8 @@ export const keywordMetrics = pgTable(
 // Rank Tracking tables
 // ============================================================================
 
-// One configuration per project+domain — defines what domain to track and how
+// One configuration per project+domain+location+language — defines what domain
+// to track and how
 export const rankTrackingConfigs = pgTable(
   "rank_tracking_configs",
   {
@@ -247,10 +251,16 @@ export const rankTrackingConfigs = pgTable(
       table.createdAt,
     ),
     uniqueIndex("rank_tracking_configs_national_idx")
-      .on(table.projectId, table.domain, table.locationCode)
+      .on(table.projectId, table.domain, table.locationCode, table.languageCode)
       .where(sql`${table.locationName} IS NULL`),
     uniqueIndex("rank_tracking_configs_local_idx")
-      .on(table.projectId, table.domain, table.locationCode, table.locationName)
+      .on(
+        table.projectId,
+        table.domain,
+        table.locationCode,
+        table.languageCode,
+        table.locationName,
+      )
       .where(sql`${table.locationName} IS NOT NULL`),
   ],
 );
@@ -391,11 +401,8 @@ export const projectActivationState = pgTable("project_activation_state", {
   updatedAt: timestampColumn("updated_at").notNull().default(isoNow),
 });
 
-// Point-in-time backlink profile summaries for the project's own domain,
-// written by the dashboard's visit-triggered refresh. DataForSEO's summary
-// already carries new/lost counts, so one snapshot renders a full card;
-// rows accumulate into history for future trend views. The domain is stored
-// per row so a later project-domain change doesn't rewrite history.
+// Retained backlink profile history. The dashboard no longer writes snapshots.
+// Each row keeps its original domain when the project website changes.
 export const backlinkSnapshots = pgTable(
   "backlink_snapshots",
   {
@@ -470,3 +477,6 @@ export const crawlerCredentials = pgTable(
     ),
   ],
 );
+
+// Cross-request refresh claims survive Worker instances and prevent duplicate spend.
+export { dataRefreshClaims } from "./dashboard.schema";
