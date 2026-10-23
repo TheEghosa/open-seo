@@ -15,6 +15,7 @@ import {
   requireAllowedEmails,
   workerName,
 } from "./alchemy.access.ts";
+import { resolveSelfHostDomain } from "./alchemy.selfhost-domain.ts";
 
 // Preview hostnames are `open-seo-<stage>.<WORKERS_SUBDOMAIN>` — the naming
 // lives in alchemy.access.ts, shared with the Access wildcard the security
@@ -178,6 +179,7 @@ const resolveSelfHostAccess = (
   stage: string,
   provision: boolean,
   workersSubdomain: string,
+  selfhostDomain: string,
 ) =>
   Effect.gen(function* () {
     let teamDomain = yield* optionalVar("TEAM_DOMAIN");
@@ -253,6 +255,7 @@ const resolveSelfHostAccess = (
         policyName: `open-seo ${stage} self-host users`,
         applicationName: `open-seo ${stage}`,
         domain: `${workerName(stage)}.${subdomain}`,
+        extraDomains: selfhostDomain ? [selfhostDomain] : undefined,
         emails: allowedEmails,
       });
       policyAud = application.aud;
@@ -360,10 +363,21 @@ export default Alchemy.Stack(
       authUrl = "";
     }
 
+    const selfhostDomain = prod
+      ? { hostname: "", attached: false }
+      : yield* resolveSelfHostDomain(stage);
+
+    // Self-hosts keep one invocation log in ten, because Workers logs are
+    // billed by volume and a burst of traffic would otherwise raise the log
+    // bill along with the request bill.
+    const selfhostObservability =
+      authMode === "cloudflare_access" ? { headSamplingRate: 0.1 } : {};
+
     const access = yield* resolveSelfHostAccess(
       stage,
       authMode === "cloudflare_access" && !prod,
       workersSubdomain,
+      selfhostDomain.hostname,
     );
 
     // Created once and bound into BOTH workers — they share the same
@@ -396,6 +410,7 @@ export default Alchemy.Stack(
       observability: {
         enabled: wrangler.observability?.enabled ?? true,
         traces: { enabled: wrangler.observability?.traces?.enabled ?? false },
+        ...selfhostObservability,
       },
       env: {
         DB: resources.DB,
@@ -435,7 +450,11 @@ export default Alchemy.Stack(
     const app = yield* Cloudflare.Worker("open-seo", {
       name: workerName(stage),
       // Prod serves the real domains; the zone is inferred from the hostname.
-      domain: prod ? ["app.openseo.so", "www.app.openseo.so"] : undefined,
+      domain: prod
+        ? ["app.openseo.so", "www.app.openseo.so"]
+        : selfhostDomain.attached
+          ? [selfhostDomain.hostname]
+          : undefined,
       // Prebuilt worker from `vite build` (@cloudflare/vite-plugin). The entry
       // exports the DO + WorkflowEntrypoint classes (re-exported by
       // src/server.ts), which `bundle: false` requires. Sibling chunks under
@@ -461,6 +480,7 @@ export default Alchemy.Stack(
       observability: {
         enabled: wrangler.observability?.enabled ?? true,
         traces: { enabled: wrangler.observability?.traces?.enabled ?? false },
+        ...selfhostObservability,
       },
       // Hosted prod pins the fetch handler next to its Postgres primary
       // (PlanetScale, AWS us-east-1); each request makes several sequential

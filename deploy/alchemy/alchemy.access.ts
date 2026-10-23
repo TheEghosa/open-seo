@@ -64,6 +64,9 @@ export const emailAccessGate = (options: {
   policyName: string;
   applicationName: string;
   domain: string;
+  // Further hostnames behind the same gate, such as a self-host's custom
+  // domain, so one sign-in and one POLICY_AUD cover every way in.
+  extraDomains?: string[];
   emails: string[];
 }) =>
   Effect.gen(function* () {
@@ -72,10 +75,17 @@ export const emailAccessGate = (options: {
       decision: "allow",
       include: options.emails.map((email) => ({ email: { email } })),
     });
+    const extraDomains = options.extraDomains ?? [];
     return yield* Cloudflare.Access.Application(options.applicationId, {
       type: "self_hosted",
       name: options.applicationName,
       domain: options.domain,
+      destinations: extraDomains.length
+        ? [options.domain, ...extraDomains].map((uri) => ({
+            type: "public" as const,
+            uri,
+          }))
+        : undefined,
       policies: [allow.policyId],
     });
   });
