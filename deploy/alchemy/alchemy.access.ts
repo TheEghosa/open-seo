@@ -68,6 +68,8 @@ export const emailAccessGate = (options: {
   // domain, so one sign-in and one POLICY_AUD cover every way in.
   extraDomains?: string[];
   emails: string[];
+  /** Turn on Access Managed OAuth so MCP clients can sign in. */
+  managedOAuth?: boolean;
 }) =>
   Effect.gen(function* () {
     const allow = yield* Cloudflare.Access.Policy(options.policyId, {
@@ -87,5 +89,18 @@ export const emailAccessGate = (options: {
           }))
         : undefined,
       policies: [allow.policyId],
+      // Lets CLI and desktop MCP clients register localhost callbacks.
+      // Unset fields (HTTPS redirect URIs, token lifetimes) keep whatever is
+      // set in the dashboard.
+      oauthConfiguration: options.managedOAuth
+        ? {
+            enabled: true,
+            dynamicClientRegistration: {
+              enabled: true,
+              allowAnyOnLocalhost: true,
+              allowAnyOnLoopback: true,
+            },
+          }
+        : undefined,
     });
   });
